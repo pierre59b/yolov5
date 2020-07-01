@@ -1,0 +1,4 @@
+,youtube_id,class_id,object_id,image_nb,xmin,xmax,ymin,ymax,found_id,found_prec
+0,3GBo3hyCXDU,19,0,3,107.0,44.0,320.0,223.0,15,0.547650158405304
+1,3GBo3hyCXDU,19,0,15,265.0,1.0,320.0,83.0,0,0.48150259256362915
+2,3GBo3hyCXDU,19,0,17,21.0,80.0,243.0,236.0,15,0.43839123845100403

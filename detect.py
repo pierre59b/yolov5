@@ -6,17 +6,31 @@ from utils import google_utils
 from utils.datasets import *
 from utils.utils import *
 
+import pickle
+import pandas as pd
+import sys
+import time
+def detect(source = 'inference/images', folder=None, out = 'inference/output', save_img=False, weights= './models/yolov5s.pt', view_img=False, save_txt=False, imgsz= 640):
+    # log_out = open("out.log", "a")
+    # sys.stdout = log_out
+    # log_err = open("err.log", "a")
+    # sys.stderr = log_err
 
-def detect(save_img=False):
-    out, source, weights, view_img, save_txt, imgsz = \
-        opt.output, opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size
+    # print("BEGIN")
+    # sys.stderr.write( \
+    #     "DETECT: "+folder)
+    # print("FIRST DETECT"+folder)
+    # if folder is not None:
+    #     source += '/'+folder
     webcam = source == '0' or source.startswith('rtsp') or source.startswith('http') or source.endswith('.txt')
 
     # Initialize
-    device = torch_utils.select_device(opt.device)
+    device = torch_utils.select_device('')
     if os.path.exists(out):
-        shutil.rmtree(out)  # delete output folder
-    os.makedirs(out)  # make new output folder
+        pass
+        # shutil.rmtree(out)  # delete output folder
+    else:
+        os.makedirs(out)  # make new output folder
     half = device.type != 'cpu'  # half precision only supported on CUDA
 
     # Load model
@@ -44,16 +58,33 @@ def detect(save_img=False):
     else:
         save_img = True
         dataset = LoadImages(source, img_size=imgsz)
-
     # Get names and colors
     names = model.module.names if hasattr(model, 'module') else model.names
+    # for i, n in enumerate(names):
+        # print(str(i)+' '+n)
     colors = [[random.randint(0, 255) for _ in range(3)] for _ in range(len(names))]
 
     # Run inference
     t0 = time.time()
     img = torch.zeros((1, 3, imgsz, imgsz), device=device)  # init img
     _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
+    df_results = pd.DataFrame(columns = ['youtube_id', 'class_id', 'object_id', 'image_nb', 'xmin', 'xmax', 'ymin', 'ymax', 'found_id', 'found_prec'])
+    # print("DETECT: "+folder)
+    # sys.stderr.write( \
+        # "DETECT: "+folder)
+    # print("before for")
     for path, img, im0s, vid_cap in dataset:
+        # print("infor")
+        
+        img_name = path.split("/")[-1]
+        # sys.stderr.write( \
+            # "Detect: "+img_name)
+        # print("Detect: "+img_name)
+        if folder is not None:
+            _, class_id, object_id = tuple(img_name.split("+"))
+            object_id, image_nb = tuple(object_id.split("_"))
+            image_nb = int(image_nb.split(".")[0])
+            new_row = {'youtube_id': folder, 'class_id': class_id, 'object_id': object_id, 'image_nb': image_nb}
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -62,10 +93,10 @@ def detect(save_img=False):
 
         # Inference
         t1 = torch_utils.time_synchronized()
-        pred = model(img, augment=opt.augment)[0]
+        pred = model(img, augment=False)[0]
 
         # Apply NMS
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        pred = non_max_suppression(pred, 0.4, 0.5, classes=None, agnostic=False)
         t2 = torch_utils.time_synchronized()
 
         # Apply Classifier
@@ -73,7 +104,9 @@ def detect(save_img=False):
             pred = apply_classifier(pred, modelc, img, im0s)
 
         # Process detections
+        # print("before det")
         for i, det in enumerate(pred):  # detections per image
+            # print("in det")
             if webcam:  # batch_size >= 1
                 p, s, im0 = path[i], '%g: ' % i, im0s[i].copy()
             else:
@@ -84,9 +117,16 @@ def detect(save_img=False):
             s += '%gx%g ' % img.shape[2:]  # print string
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  #  normalization gain whwh
             if det is not None and len(det):
+                # print("in det det")
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
-
+                if folder is not None:
+                    for d in det:
+                        # print("before row")
+                        new_row.update({'xmin':d[0].item(), 'xmax':d[1].item(), 'ymin':d[2].item(), 'ymax':d[3].item(), 'found_id':int(d[-1].item()), 'found_prec':d[-2].item()})
+                        # print("after row")
+                        df_results = df_results.append(new_row, ignore_index = True)
+                        # print("after append")
                 # Print results
                 for c in det[:, -1].unique():
                     n = (det[:, -1] == c).sum()  # detections per class
@@ -125,40 +165,22 @@ def detect(save_img=False):
                         fps = vid_cap.get(cv2.CAP_PROP_FPS)
                         w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                         h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*opt.fourcc), fps, (w, h))
+                        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
                     vid_writer.write(im0)
-
+    if folder is not None:
+        print('save in: ' + out+"/"+folder+".csv")
+        df_results.to_csv(out+"/"+folder+".csv")
     if save_txt or save_img:
         print('Results saved to %s' % os.getcwd() + os.sep + out)
         if platform == 'darwin':  # MacOS
             os.system('open ' + save_path)
 
     print('Done. (%.3fs)' % (time.time() - t0))
+    time.sleep(2)
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='weights/yolov5s.pt', help='model.pt path')
-    parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
-    parser.add_argument('--output', type=str, default='inference/output', help='output folder')  # output folder
-    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.4, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.5, help='IOU threshold for NMS')
-    parser.add_argument('--fourcc', type=str, default='mp4v', help='output video codec (verify ffmpeg support)')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--view-img', action='store_true', help='display results')
-    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
-    parser.add_argument('--classes', nargs='+', type=int, help='filter by class')
-    parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
-    parser.add_argument('--augment', action='store_true', help='augmented inference')
-    opt = parser.parse_args()
-    opt.img_size = check_img_size(opt.img_size)
-    print(opt)
+# if __name__ == '__main__':
+#     source = 'yt_bb\\frames\\youtube_boundingboxes_detection_validation\\'
+#     with torch.no_grad():
+#         detect(source)
 
-    with torch.no_grad():
-        detect()
-
-        # Update all models
-        # for opt.weights in ['yolov5s.pt', 'yolov5m.pt', 'yolov5l.pt', 'yolov5x.pt', 'yolov3-spp.pt']:
-        #    detect()
-        #    create_pretrained(opt.weights, opt.weights)
